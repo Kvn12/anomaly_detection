@@ -70,6 +70,10 @@ class ModelParams(BaseModel):
     window_anomaly_ratio: float = 0.2
 
 
+class AlertParams(BaseModel):
+    cooldown_hours: float = 48.0
+
+
 class PipelineParams(BaseModel):
     model_window_size_hours: float = 4.0
     window_overlap_hours: float = 0.0

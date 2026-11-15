@@ -1,0 +1,2 @@
+# time between alerts for anomallies
+cooldown_hours: 48

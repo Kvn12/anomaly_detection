@@ -1,11 +1,28 @@
-from .interface import AlertDecision, PredictOutput
 import datetime
+from pathlib import Path
+
+import yaml
+
+from .interface import AlertDecision, AlertParams, PredictOutput
+
+DEFAULT_PARAMS_PATH = Path("hyperparameters/alert_hyperparams.yaml")
+
+
+def load_alert_params(path: Path = DEFAULT_PARAMS_PATH) -> AlertParams:
+    """Load alert hyperparameters from YAML. Falls back to AlertParams defaults if the file is missing."""
+    if not path.exists():
+        return AlertParams()
+    with open(path) as f:
+        data = yaml.safe_load(f) or {}
+    return AlertParams(**data)
 
 
 class AlertEngine:
     def __init__(
         self,
+        params_path: Path | None = None,
     ):
+        self.params = load_alert_params(params_path or DEFAULT_PARAMS_PATH)
         self.locked = False
         self.last_alert_timestamp: datetime | None = None
 
@@ -25,7 +42,7 @@ class AlertEngine:
                 self.last_alert_timestamp = prediction.timestamp
             if (
                 prediction.timestamp - self.last_alert_timestamp
-                <= datetime.timedelta(hours=24)
+                <= datetime.timedelta(hours=self.params.cooldown_hours)
             ):
                 return AlertDecision(
                     alert=False,
