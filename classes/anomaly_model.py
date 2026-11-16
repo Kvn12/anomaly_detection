@@ -22,11 +22,13 @@ class AnomalyModel:
         self.weights_a = Weights()
         self.weights_v = Weights()
         self.params = load_model_params(params_path or DEFAULT_PARAMS_PATH)
-        self.last_deviation_ratio_v = 0.0
 
-    def _featuring(self, samples: TimeSeries) -> np.ndarray:
+    def _featuring(
+        self, samples: TimeSeries
+    ) -> tuple[np.ndarray, np.ndarray]:
         if not samples.data:
-            return np.array([], dtype=float)
+            empty = np.array([], dtype=float)
+            return empty, empty
 
         ordered = sorted(samples.data, key=lambda p: p.timestamp)
 
@@ -36,13 +38,6 @@ class AnomalyModel:
         return np.linalg.norm(acc, axis=1), np.linalg.norm(vel, axis=1)
 
     def fit(self, fitting_samples: TimeSeries) -> None:
-        # uptime_samples = TimeSeries(
-        #     data=[sample for sample in fitting_samples.data if sample.uptime]
-        # )
-        # if not uptime_samples.data:
-        #     raise ValueError("Cannot fit: no samples with uptime=True")
-
-        # X = self._featuring(uptime_samples)
         Xa, Xv = self._featuring(fitting_samples)
 
         self.weights_a = Weights(
@@ -56,18 +51,27 @@ class AnomalyModel:
             std=round(Xv.std(), 3),
         )
 
-    def _zscore(self, X: np.ndarray) -> np.ndarray:
+    def _zscore(
+        self, X: tuple[np.ndarray, np.ndarray]
+    ) -> tuple[np.ndarray, np.ndarray]:
         Xa, Xv = X
         w_a = self.weights_a
         w_v = self.weights_v
         return np.abs((Xa - w_a.mean) / w_a.std), np.abs((Xv - w_v.mean) / w_v.std)
-        # return (Xa - w_a.mean) / w_a.std, (Xv - w_v.mean) / w_v.std
 
-    def _window_deviation_ratio(self, X: np.ndarray) -> float:
+    def _window_deviation_metrics(
+        self, X: tuple[np.ndarray, np.ndarray]
+    ) -> tuple[float, float, float]:
         z_a, z_v = self._zscore(X)
         anomalous_points_a = z_a > self.params.z_threshold
         anomalous_points_v = z_v > self.params.z_threshold
-        return float(np.sum(anomalous_points_a) / len(z_a)), float(np.sum(anomalous_points_v) / len(z_v))
+        deviation_ratio_a = float(np.mean(anomalous_points_a))
+        deviation_ratio_v = float(np.mean(anomalous_points_v))
+        # calculate the deviation score as the mean of the excess z-scores above the threshold
+        deviation_score = float(
+            np.mean(np.maximum(z_v - self.params.z_threshold, 0.0))
+        )
+        return deviation_ratio_a, deviation_ratio_v, deviation_score
 
     def predict(self, samples: TimeSeries) -> PredictOutput:
         if not self.weights_a.fitted or not self.weights_v.fitted:
@@ -76,21 +80,15 @@ class AnomalyModel:
             raise ValueError("Cannot predict on empty TimeSeries")
 
         X = self._featuring(samples)
-        deviation_ratio_a, deviation_ratio_v = self._window_deviation_ratio(X)
-        # is_anomalous = False
-        # if deviation_ratio_a >= self.params.window_anomaly_ratio or deviation_ratio_v >= self.params.window_anomaly_ratio:
-        #     is_anomalous = True
-        is_anomalous = deviation_ratio_v >= self.params.window_anomaly_ratio
-        # if is_anomalous and (deviation_ratio_v >= self.last_deviation_ratio_v):
-        #     self.last_deviation_ratio_v = deviation_ratio_v
-        #     is_anomalous = True
-        # else:
-        #     is_anomalous = False
-
-        if any(not sample.uptime for sample in samples.data):
-            is_anomalous = False
+        deviation_ratio_a, deviation_ratio_v, deviation_score = self._window_deviation_metrics(X)
+        uptime_valid = all(sample.uptime for sample in samples.data)
+        is_anomalous = (
+            deviation_ratio_v >= self.params.window_anomaly_ratio and uptime_valid
+        )
 
         return PredictOutput(
             anomaly_status=is_anomalous,
             timestamp=samples.data[-1].timestamp,
+            deviation_score=deviation_score,
+            uptime_valid=uptime_valid,
         )

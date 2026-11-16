@@ -1,2 +1,6 @@
-# time between alerts for anomallies
+# time between alerts for anomalies
 cooldown_hours: 48
+# Minimum increase in deviation score to consider if an anomaly has escalated
+escalation_margin: 0.0
+# Minimum number of consecutive normal windows to unlock the alert engine after an anomaly
+recovery_windows: 100
