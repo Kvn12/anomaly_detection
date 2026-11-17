@@ -1,48 +1,18 @@
 # First Observations
 
-There is a solution and apparently the hyperparameters are not well ajusted, a simple modification in the window_anormaly_ratio produced better results.
-Due to that, a study with the fit data, should be conducted to choose better hyperparameters.
 
-Also, looking at the plots, and knowing that only the velocity input is being used, in some data, velocity it is not enough to predict a failure. In the first scenario, the information about failure is apparently only present in the accelerometers. A further study should be conducted on that.
-
-We have points where the velocity and acceleration drops to less than 1, and this triggers the alert. (Fix this)  -> this depends on the zcore_threshold, in one case it did not flagged
-
-Not flagging the second problem -> it might flag it, the problem is to flag more than once on the same on going event. Never flags the second event.
 
 There is the columns of if the machin was working in that time. Maybe use this to avoid flagging in moments that it does not make sense. Only calculate the metrics when the machine was running.
-
-Lots of false positives, in many cases flagging nothing
-
-Lots of false negatives. Probably because of flagging the nothing and not flaggin at all
-
-Change the 0.7, for something around
-
-Use acc, not enough
-
-Combine ACC and Velocity, test other strategy
-
-Only positive variations, not good enough
-
-Do not predict if not running -> check this better -> If there is any sample that was not uptime, does not flag
-
-In some cases, the first, for example, it does not flag, probably because the signal is lower than the fit data. An option would be to save the mean and std for the current data, not only the fit one. If it does not flag based on the fit one, it may flag in the predict.
-
-Keep the last state it flagged, may consider that for the next flags -> if increased considering the last flag.
-
-Increase the stride, overlap. -> 1.5 produced same results -> 3 and 2 produced a little bit worse results
 
 For the cases that have very low signal, analyse if any math operation should be conducted to avoid that, keep in the same scale -> talvez nda a ver essa ideia
 
 ## First Modifications to Improve Performance
 
 1. Study data to better ajust hyperparameters manually and look at results and get other insights.
-2. Include the is running in the fit proccess.
-3. Fix the second alert problem.
 
 ## Improvements in the Future
 
-1. Automate this study proccess. Include this in the pipeline somehow, using the labels, dont have labels.
-2. Use accelerometer as well.
+1. Use accelerometer as well.
 
 ## Tests performed
 
@@ -56,25 +26,27 @@ For the cases that have very low signal, analyse if any math operation should be
 
 ## Understanding the Baseline Solution
 
-The given solution is a model that receives a fit data, a timeseries containing Velocity RMS along three axis (mm/s) and Acceleration RMS along three axis (g) signals, the UTC timestamp for each sample and a boolean flag about the machine status (running or not), calculates the features for the velocity input and learns the caracteristics from this signal: Mean and Standart deviation. The features is basically the norm of the velocity vector, composed by the 3 axis signals (X, Y, Z).
-After this fit step, it receives, during the prediction fase, the prediction data, for each window, using the weight and the standartd deviation, learnt from the fit data, calculates the zscore for each sample in the window. The zscore is basically a computation of how many standard deviations the point is far from the mean of the dataset, above or below.
+The given solution is a model that receives a fit data, a timeseries containing Velocity RMS along three axis (mm/s) and Acceleration RMS along three axis (g) signals, the UTC timestamp for each sample and a boolean flag about the machine status (running or not), calculates the features for the velocity input and learns the caracteristics from this signal: Mean and Standard deviation. The features are basically the norm of the velocity vector, which is composed by the 3 axis signals (X, Y, Z).
+After this fit step, it receives, during the prediction fase, the prediction data, for each window, using the weight and the standard deviation, learnt from the fit data, calculates the zscore for each sample in the window, which is basically a computation of how many standard deviations the point is above the mean of the dataset, in this case.
 
-The anomaly detection model is basically a decision of how many points, within the window, with more than a threshold value of standard deviations above the mean is considered an anomally. For example, if in the window more than 0.2 samples are more than 3 standard deviations above the mean of the fit data, than this window is considereded an anomally.
-This baseline model was run and the metrics were calculated, which are:
+The anomaly detection model is basically a decision of how many points, within the window, with more than a threshold value of standard deviations above the mean are considered an anomally. For example, if there is in the window more than 0.2 samples (`window_anomaly_ratio` hyperparameter) that are more than 3 standard deviations (`z_threshold` hyperparameter) above the mean of the fit data, than this window is considereded to contain an anomally.
+This baseline model, tagged in this branch as `V1.0.0`,  was run and the metrics were calculated, which were:
 
-Preciosion: 0.263 Recall: 0.172 and F1Score: 0.208
-With the predictions being:
-True Positives: 5 False Positives: 14 False Negatives: 24
+| Experiment        | True Positive | False Positive | False Negative | Precision | Recall | F1-Score |
+| ----------------- | ------------- | -------------- | -------------- | --------- | ------ | -------- |
+| Baseline (V1.0.0) | 5             | 14             | 24             | 0.263     | 0.172  | 0.208    |
 
-These are not good metrics, which means the model does not perform very good: It Classifies few windows as anomallies (True Positives) and classifies lots of cases as anomallies that are not anomallies (False Positives).
+These metrics are not good metrics, and tell us what are the problems with this model: It classifies few windows as anomallies (5 True Positives, misses 24) and classifies as anomallies lots of parts that are not (14 False Positives).
 
 ## Baseline Weaknesses
 
 After studying the model and its behaviour within the prediction data, a few reasons for this poor performance could be found:
 
-- The hyperparameters are not well ajusted to the model: a simple change in the `window_anomaly_ratio`from the `model_hyperparameters.yaml` config and it produces better results.
-- The alert module does not reports more than one case on anomally per prediciton data: there is lock argument that prevents that from happening.
-- In some data, the anomally cannot be seen in the Velocity signal which is what the model sees; it exists only in the Accelerometer one, and this is physically explainable, some types of failures are only detectable in the Acceleration signal and some only in the Velocity.
+- The hyperparameters are not well ajusted to the dataset: a simple change in the `window_anomaly_ratio`from the `model_hyperparameters.yaml` config and it produces better results.
+- The alert module does not report more than one case as anomally per prediciton data: there is a `lock` argument that prevents that from happening and in the requirements of the project, it should alert again after the anomaly period if it has increased.
+- In some data, the anomally cannot be seen in the Velocity signal, which is what the model sees; it exists only in the Accelerometer one, and this is physically explainable, as learnt from a quick research; some types of failures are only detectable in the Acceleration signal and some only in the Velocity.
   - Examples of Failures detectable in each type of signal:
     - Velocity: rotor unbalance, shaft misalignment, mechanical looseness, and others.
     - Acceleration: early roolling-element bearing defects, gear mesh wear, and others.
+- TALK ABOUT THE PREDICTIONS IN MOMENTS THAT THE MACHINE IS NOT ON?
+- CHECK THIS In some cases, the first, for example, it does not flag, probably because the signal is lower than the fit data. An option would be to save the mean and std for the current data, not only the fit one. If it does not flag based on the fit one, it may flag in the predict.
