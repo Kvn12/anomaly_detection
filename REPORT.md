@@ -42,9 +42,9 @@ These metrics indicate poor performance and tell us what are the problems with t
 After studying the model and its behaviour within the prediction data, several reasons for this poor performance could be identified:
 
 - The hyperparameters were not well ajusted for the dataset: Changing the `window_anomaly_ratio` in`model_hyperparameters.yaml` increased the results.
-- The alert module initially allowed only one alert type during each prediction period. A lock prevented repeated alerts, even when the same ongoing state included a significant escalation, project .
-- In some observations, the model flagged a period with almost no movement. This period had `uptime = False` , which indicates that the machine was not operating.
-- In some cases, an anomaly was visible in the acceleration signal but not in velocity, which is the only signal used by the baseline model. And as learnt from a quick research; some types of failures are only detectable in the Acceleration signal and some only in the Velocity. So Different failure types produce different vibration signatures:
+- The alert module initially allowed only one alert type during each prediction period. A lock prevented repeated alerts, even when a new anomalous event included a significant escalation. So some new events within the same input were being missed.
+- In some observations, the model flagged a period with almost no movement, this period had `uptime = False` , which indicates that the machine was not operating. The model flagged as anomaly a period that the machine was not running, which does not make sense.
+- In some cases, an anomaly was visible in the acceleration signal but not in velocity, which is the only signal used by the baseline model, so the model is not seing the event. And, as learnt from a quick research, it makes sense: some types of failures are only detectable in the Acceleration signal and some only in the Velocity. So different failure types produce different vibration signatures:
 
   - Examples of Failures detectable in each type of signal:
     - Velocity: rotor unbalance, shaft misalignment, mechanical looseness, and others.
@@ -53,9 +53,9 @@ After studying the model and its behaviour within the prediction data, several r
 
 ## Methodology
 
-Due to the nature of the problem and need of being able to explain the model behaviour over the results, the approach was to improve the results and keep the solution as simple and interpretable as possible.
+Due to the nature of the problem and need of being able to explain the model behaviour over the results, the approach was to improve the current model and keep the solution as simple and interpretable as possible.
 
-The investigation process started by looking at the plots with the predicted alerts and the true incident periods and trying to understand the reason of the predictions. It was observed that the `window_anomaly_ratio` hyperparameter value was too low, and because of that, the model was considering any small disturbance in the signal as anomaly, and that, connected with the fact of not alerting again in the same input, the model was not getting the right point of anomaly. 
+The investigation process started by looking at the plots with the predicted alerts and the true incident periods and trying to understand the reason of the predictions. It was observed that the `window_anomaly_ratio` hyperparameter value was too low, and because of that, the model was considering any small disturbance in the signal as anomaly, and that, connected with the fact of not alerting again in the same input, the model was not getting the right point of anomaly.
 
 With this in mind and looking at the periods where the real anomaly happens, it was observed that the ratio of points over the mean of the signal in the anomaly areas were higher than 20%, which motived to a manual search for the best value of this hyperparameter for this dataset. This search found 0.7 to be the best value, solving one of the problems. Increasing the ratio reduced false positives and missed incident periods. This baseline model with this small change was also tagged in the repository, just for consideration, as `v1.1.0` and produced these metrics:
 
@@ -63,14 +63,59 @@ With this in mind and looking at the periods where the real anomaly happens, it 
 | -------------------------------------------- | ------------- | -------------- | -------------- | --------- | ------ | -------- |
 | Baseline with 0.7 as anomaly ratio (V1.0.0) | 9             | 3              | 20             | 0.750     | 0.310  | 0.439    |
 
-This model perfomed better than baseline: it detected more True positives and decreased the cases of false negatives, increasing precision and recall, which was still low because some real incidents were missed. Regarding the F1-Score, it is basically an harmonic mean of these two metrics (Precision and Recall), so the moment that the false negatives are solved, the Recall should increase, bringing togheter the F1-Score.
+This model perfomed better than baseline: it detected more True positives and decreased the cases of false negatives, increasing precision and recall, which was still low because some real incidents were missed. Regarding the F1-Score, it is basically an harmonic mean of these two metrics (Precision and Recall), so the moment that the false negatives are solved, the Recall should increase, bringing together the F1-Score.
 
-The next problem to be addressed was the single alert one. For this, a new logic was implemented in the `alert_engine` module using a cooldown period before sending another anomaly alert and an escalation score. After analysing the data, it was observed that when more than one anomaly occurred in the same input, it happened more than one day apart from the others. Therefore, the cooldown was set to 48 hours. When this cooldown was added, an increase in false positives was observed because, at some points, an alert was being triggered even though the anomaly had not increased. Because of that, new logic was implemented to verify whether the new anomaly had increased compared with the last alerted one. Several possible solutions were tested, and the best approach was `deviation_score`, which is the mean of the positive differences between `z_score` and `zscore_threshold`. Thus, a new alert is allowed only when the new alert has a higher `deviation_score`.
+The next problem to be addressed was the single alert one. For this, a new logic was implemented in the `alert_engine` module using a cooldown period before sending another anomaly alert and an escalation score. After analysing the data, it was observed that when more than one anomaly occurred in the same input, it happened more than one day apart from the others. Therefore, the cooldown was set to 48 hours. When this cooldown was added, an increase in false positives was observed because, at some points, an alert was being triggered even though the anomaly had not increased. Because of that, a new logic was implemented to verify whether the new anomaly had increased compared with the last alerted one. Several possible solutions were tested, such as the `z_score`, and the best approach found was `deviation_score`, which is the mean of the positive differences between `z_score` and `zscore_threshold`. Thus, a new alert is allowed only when the new alert has a higher `deviation_score`.
 
  To complement this solution, two additional hyperparameters were added. They have not yet been thoroughly explored, but they currently appear to be the best choices for this data. They are `escalation_margin` and `recovery_windows`. The first adjusts how much the anomaly must increase for the solution to trigger an alert, while the second defines the minimum number of consecutive normal windows required to unlock the alert engine after an anomaly. This second mechanism is similar to the cooldown alert and is intended to avoid re-alerting for the same ongoing issue.
 
 For the third problem, the implementation was simple: a check was added to the `anomaly_model` to prevent a window from being flagged as anomalous when the `uptime` flag is false. This avoids false anomalies, as a high z-score may occur simply because the machine is not running. In this example, the metric observed by the model would normally trigger an anomaly, but the purpose of the solution is to determine whether the condition is caused by a machine problem or is merely a normal operating state.
 
+The model developed until here, with all this modifications, was tagged in this repo as `v2.0.0`, and its performance will be discussed in the Performace section.
+
+CRIAR TAG!!
+
+CHECK THIS:
+
+To address the domain anomaly problem, the `anomaly_model` was edited to do the same fit pipeline for the accelerometer signal, so now, it stores as an weight, the mean and the standard deviation for the norm of the accelorometer and also, the featuring process is done in the same way for this signal. With this new information, some tests had been conducted: using the same logic and same hyperparameters with both of the signals, letting each one to flag the window if necessary, but it did not work well, the accelerometer needs its own hyperparameters ajusted for it.
+
+CHECK THIS:
+
+For the last detected problem, a study should have been conducted regarding the data to understand its ranges and limitations. And also, it should have been interesting to use some other formats for the accelerometer, for example, to analyse the data in the frequency domain, with a Fourier Discrete Tranformation, since the signal does not contain information in the amplitude, it might have in the frequencies on it.
+
+Disclaimers: the pipeline hyperparams were changed a little as a testing, but they looked to be condizent with the data and did seen to need to be changed. Some tests were conducted and presented worse metrics than the ones achieved so far. Maybe a more structered tune might be needed for these params, more will be talked in the Future Work section.
+
 ## Performance
 
+The final model, with the implementations that were possible to develop in this challenge period, tagged as `v0.0.0` and with following settings:
+
+- Model Hyperparams:
+
+  - `window_anomaly_ratio = 0.7`;
+  - `z_threshold = 3`;
+- Pipeline Hyperparams:
+
+  - `model_window_size_hours = 2`;
+  - `window_overlap_hours: 1`;
+- Uptime filtering logic implemented, requiring every sample in a window to have
+  `uptime = True`;
+- Alert Hyperparams (added in the hyperparameters folder):
+
+  - `cooldown_hours = 48`;
+  - `escalation_margin = 0.0`;
+  - `recovery_windows = 100`;
+
+This model produced the following results:
+
+| Experiment        | True Positive | False Positive | False Negative | Precision | Recall | F1-Score |
+| ----------------- | ------------: | -------------: | -------------: | --------: | -----: | -------: |
+| Baseline (V1.0.0) |             5 |             14 |             24 |     0.263 |  0.172 |    0.208 |
+| v2.0.0            |            12 |              3 |             17 |     0.800 |  0.414 |    0.545 |
+
+Looking at these metrics and the preditcions, we can verify that problems were very reduced, the True Positive increased, 5 -> , the False Positive and the False Negatives decreased, 14 -> , 24 -> , respectively. 
+
 ## Future Work
+
+falar da main_tqdm e do compare results.
+
+criar notebook para ver os dados de fit.
