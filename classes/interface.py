@@ -68,6 +68,8 @@ class Weights(BaseModel):
 class ModelParams(BaseModel):
     z_threshold: int = 3
     window_anomaly_ratio: float = 0.2
+    acceleration_z_threshold: int = 10
+    acceleration_window_anomaly_ratio: float = 1.0
 
 
 class AlertParams(BaseModel):

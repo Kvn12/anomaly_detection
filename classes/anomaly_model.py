@@ -63,15 +63,19 @@ class AnomalyModel:
         self, X: tuple[np.ndarray, np.ndarray]
     ) -> tuple[float, float, float]:
         z_a, z_v = self._zscore(X)
-        anomalous_points_a = z_a > self.params.z_threshold
+        anomalous_points_a = z_a > self.params.acceleration_z_threshold
         anomalous_points_v = z_v > self.params.z_threshold
         deviation_ratio_a = float(np.mean(anomalous_points_a))
         deviation_ratio_v = float(np.mean(anomalous_points_v))
-        # calculate the deviation score as the mean of the excess z-scores above the threshold
-        deviation_score = float(
+        deviation_score_a = float(
+            np.mean(np.maximum(z_a - self.params.acceleration_z_threshold, 0.0))
+        )
+        deviation_score_v = float(
             np.mean(np.maximum(z_v - self.params.z_threshold, 0.0))
         )
-        return deviation_ratio_a, deviation_ratio_v, deviation_score
+        return deviation_ratio_a, deviation_ratio_v, max(
+            deviation_score_a, deviation_score_v
+        )
 
     def predict(self, samples: TimeSeries) -> PredictOutput:
         if not self.weights_a.fitted or not self.weights_v.fitted:
@@ -80,10 +84,17 @@ class AnomalyModel:
             raise ValueError("Cannot predict on empty TimeSeries")
 
         X = self._featuring(samples)
-        deviation_ratio_a, deviation_ratio_v, deviation_score = self._window_deviation_metrics(X)
+        deviation_ratio_a, deviation_ratio_v, deviation_score = (
+            self._window_deviation_metrics(X)
+        )
         uptime_valid = all(sample.uptime for sample in samples.data)
         is_anomalous = (
-            deviation_ratio_v >= self.params.window_anomaly_ratio and uptime_valid
+            (
+                deviation_ratio_v >= self.params.window_anomaly_ratio
+                or deviation_ratio_a
+                >= self.params.acceleration_window_anomaly_ratio
+            )
+            and uptime_valid
         )
 
         return PredictOutput(
