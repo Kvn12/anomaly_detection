@@ -6,7 +6,7 @@ The provided solution uses a model that receives fitted data in the form of a ti
 				Velocity magnitude = √(Vx² + Vy² + Vz²)
 After the fitting step, the model receives prediction data, during the prediction phase. For each window, it uses the mean and standard deviation learned from the fitted data to calculate the z-score of every sample, which is a computation of how many standard deviations a sample is from the mean.
 
-The anomaly detection model basically determines wheter a window contains an anomaly based on the proportion of samples exceeding the a z-score threshold. For example,  a window is considered anomalous if more than 20% of its samples (`window_anomaly_ratio` hyperparameter) have more than 3 standard deviations (`z_threshold` hyperparameter) over the mean of the fitted data.
+The anomaly detection model basically determines wheter a window contains an anomaly based on the proportion of samples exceeding the z-score threshold. Because the model uses the absolute z-score, values that are much higher or lower than the fitted mean can both be considered anomalous. For example,  a window is considered anomalous if more than 20% of its samples (`window_anomaly_ratio` hyperparameter) have more than 3 standard deviations (`z_threshold` hyperparameter) over the mean of the fitted data.
 This baseline model, tagged in this repository as `V1.0.0`,  produced the following metrics:
 
 | Experiment        | True Positive | False Positive | False Negative | Precision | Recall | F1-Score |
@@ -43,9 +43,9 @@ With this in mind and looking at the periods where the real anomaly happens, it 
 
 This model perfomed better than baseline: it detected more True positives and decreased the cases of false negatives, increasing precision and recall, which was still low because some real incidents were missed. Regarding the F1-Score, it is basically an harmonic mean of these two metrics (Precision and Recall), so the moment that the false negatives are solved, the Recall should increase, bringing together the F1-Score.
 
-The next problem to be addressed was the single alert one. For this, a new logic was implemented in the `alert_engine` module using a cooldown period before sending another anomaly alert and an escalation score. After analysing the data, it was observed that when more than one anomaly occurred in the same input, it happened more than one day apart from the others. Therefore, the cooldown was set to 48 hours. When this cooldown was added, an increase in false positives was observed because, at some points, an alert was being triggered even though the anomaly had not increased. Because of that, a new logic was implemented to verify whether the new anomaly had increased compared with the last alerted one. Several possible solutions were tested, such as the `z_score`, and the best approach found was `deviation_score`, which is the mean of the positive differences between `z_score` and `zscore_threshold`. Thus, a new alert is allowed only when the new alert has a higher `deviation_score`.
+The next problem to be addressed was the single alert one. For this, a new logic was implemented in the `alert_engine` module using a cooldown period before sending another anomaly alert and an escalation score. After analysing the data, it was observed that when more than one anomaly occurred in the same input, it happened more than one day apart from the others. Therefore, the cooldown was set to 48 hours. When this cooldown was added, an increase in false positives was observed because, at some points, an alert was being triggered even though the anomaly had not increased. Because of that, a new logic was implemented to verify whether the new anomaly had increased compared with the last alerted one. Several possible solutions were tested, such as the `z_score`, and the best approach found was `deviation_score`, which is the mean of the positive differences between `z_score` and `zscore_threshold`. Thus, a new alert is allowed only when the new alert has a higher `deviation_score`. Requiring an elapsed cooldown and an increased deviation score reduces repeated alerts for an ongoing event.
 
- To complement this solution, two additional hyperparameters were added. They have not yet been thoroughly explored, but they currently appear to be the best choices for this data. They are `escalation_margin` and `recovery_windows`. The first adjusts how much the anomaly must increase for the solution to trigger an alert, while the second defines the minimum number of consecutive normal windows required to unlock the alert engine after an anomaly. This second mechanism is similar to the cooldown alert and is intended to avoid re-alerting for the same ongoing issue.
+To complement this solution, two additional hyperparameters were added. They have not yet been thoroughly explored, but they currently appear to be the best choices for this data. They are `escalation_margin` and `recovery_windows`. The first adjusts how much the anomaly must increase for the solution to trigger another alert, while the second defines the minimum number of consecutive normal windows required to clears the severity score recorded for the previous alert. So that, a later alert still requires a current anomaly and an elapsed cooldown, but after recovery it does not need to exceed the severity of the previous event.
 
 For the third problem, the implementation was simple: a check was added to the `anomaly_model` to prevent a window from being flagged as anomalous when the `uptime` flag is false. This avoids false anomalies, as a high z-score may occur simply because the machine is not running. In this example, the metric observed by the model would normally trigger an anomaly, but the purpose of the solution is to determine whether the condition is caused by a machine problem or is merely a normal operating state.
 
@@ -53,17 +53,31 @@ The model developed until here, with all this modifications, was tagged in this 
 
 To address the domain anomaly problem, the `anomaly_model` was extended to incorporate accelerometer and apply the same fitting and feature-extraction process to acceleration as to velocity, it now stores the mean and standard deviation of the acceleration-vector magnitude as model weights. Initial tests applied the same detection logic and hyperparameters to both signals, allowing either to flag a window. This increased false positives, suggesting that the acceleration hyperparameters require further tuning or that a different fusion strategy should be explored. This model was tagged as `v2.1.0` and it contains the acceleration new hyperparams support, but its values  were raised to limit their influence on predictions; as a result, its performance remained the same as `v2.0.0`.
 
-CHECK THIS:
+Regarding the accelerometer, further analysis of the input data would help clarify its information content and limitations. The RMS values capture vibration amplitude but do not preserve the raw waveform details needed to identify the machine’s vibration frequencies. Applying a Discrete Fourier Transform (DFT) to the available RMS readings could reveal slower periodic patterns, but analyzing the actual vibration frequencies would require raw accelerometer data. This approach is discussed further in the Future Work section.
 
-For the last detected problem, a study should have been conducted regarding the data to understand its ranges and limitations. And also, it should have been interesting to use some other formats for the accelerometer, for example, to analyse the data in the frequency domain, with a Fourier Discrete Tranformation, DFT, since the signal does not contain information in the amplitude, it might have in the frequencies on it, although with the given input, aceleromenter in RMS would not produce much improvements, it would need the raw signal. More about this ideia will be discussed in the Future Work section.
+**Pipeline hyperparameters:** The pipeline settings were varied in several experiments. The current values appeared reasonable for the data, and the tested alternatives produced worse metrics, so the current settings were kept. A more systematic tuning process may be positive; this is also discussed in the Future Work section.
 
-Disclaimers: the pipeline hyperparams were changed a little as a testing, but they looked to be condizent with the data and did seen to need to be changed. Some tests were conducted and presented worse metrics than the ones achieved so far. Maybe a more structered tune might be needed for these params, more will be talked in the Future Work section.
+During the investigation, several model configurations with small modifications were tested. These experiments helped clarify the model’s limitations and brought some insights for their resolution. Although not every experiment is described in detail here, its metrics are stored and compared in the `compare_experiment_metrics.ipynb` notebook. The notebook was created to simplify final metrics aggregation and comparison, and experiment names indicate the settings or logic each one contained.
 
-During the investigation process, lots of models were tested, with few modifications, which guided the full acknowledge of the problems and gave the insights to solve them. Some tests do not worth mentioning all the details, but their metrics were computed and stored in the `compare_experiment_metrics.ipynb` notebook, which was implemented to facilitate the aggregation and comparison of the metrics generated by the models. All the names of the experiments in there were given relative to their caracteristics, hyperparams or different logic applied.
+The table below summarizes selected experiments and their results across the 29 scenarios. It illustrates the effects of the main changes; the acceleration experiments were exploratory and are not direct, fair comparisons with the final configuration.
+
+| Experiment / change                                          |           TP |          FP |           FN |       Precision |          Recall |              F1 |
+| ------------------------------------------------------------ | -----------: | ----------: | -----------: | --------------: | --------------: | --------------: |
+| Baseline (`v1.0.0`)                                        |            5 |          14 |           24 |           0.263 |           0.172 |           0.208 |
+| `window_anomaly_ratio = 0.4`                               |            7 |           8 |           22 |           0.467 |           0.241 |           0.318 |
+| `window_anomaly_ratio = 0.7`                               |            9 |           3 |           20 |           0.750 |           0.310 |           0.439 |
+| Add uptime filtering                                         |            9 |           2 |           20 |           0.818 |           0.310 |           0.450 |
+| 48-hour cooldown, deviation-score gate, and uptime filtering |           11 |           6 |           18 |           0.647 |           0.379 |           0.478 |
+| 24-hour cooldown, deviation-score gate, and uptime filtering |           12 |          12 |           17 |           0.500 |           0.414 |           0.453 |
+| Acceleration only (exploratory)                              |            4 |          36 |           25 |           0.100 |           0.138 |           0.116 |
+| Acceleration and velocity (exploratory)                      |           11 |          53 |           18 |           0.172 |           0.379 |           0.237 |
+| Selected model (`v2.0.0`)                                  | **12** | **3** | **17** | **0.800** | **0.414** | **0.545** |
+
+Increasing the anomaly ratio and adding uptime filtering improved precision while retaining the same recall. Allowing repeat alerts after a cooldown increased recall, but also produced more false positives, especially with the shorter interval. The acceleration experiments did not improve the overall results, only increased false positives. Among the configurations tested, `v2.0.0` achieved the highest F1 score, although its recall shows that many incidents were still missed. These results are specific to this dataset because the settings were selected using its prediction data.
 
 ## Performance
 
-The final best model, with the implementations that were possible to develop, in this challenge period, tagged as `v2.0.0` and with following settings:
+The best-performing model developed during this challenge period was tagged as `v2.0.0`. Its configuration was:
 
 - Model Hyperparams:
 
@@ -75,31 +89,31 @@ The final best model, with the implementations that were possible to develop, in
 
   - `model_window_size_hours = 2`;
   - `window_overlap_hours: 1`;
-- Uptime filtering logic implemented, requiring every sample in a window to have
-  `uptime = True`;
+
+* **Uptime filtering:** a window is eligible for anomaly detection only if every sample has `uptime = True`.
+
 - Alert Hyperparams (added in the hyperparameters folder):
 
   - `cooldown_hours = 48`;
   - `escalation_margin = 0.0`;
   - `recovery_windows = 100`;
 
-This model produced the following results:
+The model produced the following results:
 
 | Experiment        | True Positive | False Positive | False Negative |       Precision |          Recall |        F1-Score |
 | ----------------- | ------------: | -------------: | -------------: | --------------: | --------------: | --------------: |
 | Baseline (V1.0.0) |             5 |             14 |             24 |           0.263 |           0.172 |           0.208 |
 | v2.0.0            |  **12** |    **3** |   **17** | **0.800** | **0.414** | **0.545** |
 
-Looking at these metrics and the preditcions, we can verify that some problems were resolved and some still persists. The True Positive increased, 5 -> 12, the False Positive and the False Negatives decreased, 14 -> 3, 24 -> 17, respectively.
-This best model achieved so far, increased its performance, comparing to the baseline: it is more sensible to some events while avoiding to predict false anomalies, only 3 were done. It is still not a very good model, it misses more than a half of the anomalies, which can be visualized by the recall metric, 0.414.
+Compared with the baseline, `v2.0.0` increased true positives from 5 to 12, reduced false positives from 14 to 3, and reduced false negatives from 24 to 17. This indicates improved detection while producing fewer false alerts. However, the model still misses more than half of the labeled incidents: its recall is 0.414, meaning it detected about 41% of them.
 
-The great improvement this model brought was the increase of the correct predictions, while decreasing the false ones.
+Overall, the main improvement was detecting more incidents while substantially reducing false positives. These are the best results observed among the configurations tested on this dataset; they should not be treated as an independent estimate of performance on unseen data.
 
 ## Future Work
 
-This achieved model, although increased the performance, it still lacks for detection anomalies in the accelerometer domain and the strategies tested so far, did not produced any improvement, only more false negatives. So that, other strategies should be studied with it, a deep analysis to fit data and the predict, to understand what might be the best form to integrate this other input in the decision pipeline and differentiate the normal signal to the disturbed one.
+Although the final model improved overall performance, it still does not detect anomalies that are more evident in the accelerometer signal. The acceleration strategies tested so far did not improve the overall metrics: using acceleration alone increased both false positives and false negatives, while combining it with velocity also produced additional false positives. Further analysis of the fit and prediction data could help identify how to differentiate normal from abnormal acceleration patterns and choose a more effective way to integrate them into the decision pipeline.
 
- Another strategy that would be interesting was to convert the signal do the frequency domain, as pointed before. This would be achieved by passing the signal to a Discrete Fourier Transform (DFT) and maybe comparing the highest energy frequencies with the  ones from the fit data, and check if anything different appeared. This strategy looks promissing but it needs some attentions and probably will not work for these input data because of the sampling rate, needing to be careful about the Nyquist frequency, to avoid aliasing and losing the interested signal, and the caracteristics of it, the acelerometer is in RMS, which probably took part of its frequency information. A deeper study need to be conducted to understand the correct behaviour of this operations and also the sampling frequency.
+Another strategy that would be interesting was to convert the signal do the frequency domain, as pointed before. This would be achieved by passing the signal to a Discrete Fourier Transform (DFT) and maybe comparing the highest energy frequencies with the  ones from the fit data, and check if anything different appeared. This strategy looks promissing but it needs some attentions and probably will not work as expected for these input data because of the sampling rate, needing to be careful about the Nyquist frequency, to avoid aliasing and losing the interested signal, and the caracteristics of it, the acelerometer is in RMS and sampled at 10 minutes, which might reveal slower variations. A deeper study need to be conducted to understand the correct behaviour of this operations and also the sampling frequency.
 
 Also, the hyperparameters were chosen manually using the full prediction dataset. A more robust technique would be grouped cross-validation, splitting the data by scenario so that each asset’s windows remain together. This would help select parameters on training scenarios and evaluate them on unseen scenarios, improving its performance and reducing the risk of overfitting.
 Also the pipeline hyperparams were changes to test, but not much well explored. Same analysis for them.
@@ -109,6 +123,6 @@ Also, thinking of more complex techniques, such as an autoencoder trained on nor
 
 ## Project Notes
 
-For better visualization a notebook, that reads the experiment outputs page and retrieves the final metrics of the model, was created, `compare_experiment_metrics.ipynb`. And also, for visualization, since the `main.py` could not be changed, a copy of it was created, `main_tqdm.py` and a tqdm, library that shows the progress of a iteration, was added to the scenarios iteration. The model works the same way for the main.py and the main_tqdm.py.
+For easier comparison of experiment results, the `compare_experiment_metrics.ipynb` notebook was created to read the experiment outputs folder with the final metrics output file and display the models aggregate metrics. Since `main.py` could not be modified, it was copied and named as`main_tqdm.py`, containing some modifications to display progress while iterating over scenarios using the `tqdm` library. Both files use the same model and pipeline logic.
 
- Disclaimer, generative AI was used in this project only for the creation of the compare_experiment_metrics notebook, the tqdm main, to search and fix some implementation bugs, and to review some parts of this report. But the full exploration, analysis and solving strategies were thought by me.
+Generative AI was used to help debug some implementations and refine parts of the model and alert logic, create the comparison notebook and progress-enabled script, and review parts of this report. The experiments, analysis and solving strategies were done by me.
