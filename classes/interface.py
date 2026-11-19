@@ -68,6 +68,14 @@ class Weights(BaseModel):
 class ModelParams(BaseModel):
     z_threshold: int = 3
     window_anomaly_ratio: float = 0.2
+    acceleration_z_threshold: int = 10
+    acceleration_window_anomaly_ratio: float = 1.0
+
+
+class AlertParams(BaseModel):
+    cooldown_hours: float = 48.0
+    escalation_margin: float = 0.0
+    recovery_windows: int = 3
 
 
 class PipelineParams(BaseModel):
@@ -78,6 +86,8 @@ class PipelineParams(BaseModel):
 class PredictOutput(BaseModel):
     anomaly_status: bool
     timestamp: datetime
+    deviation_score: float = 0.0
+    uptime_valid: bool = True
 
 
 class AlertDecision(BaseModel):

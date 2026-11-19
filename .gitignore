@@ -221,3 +221,6 @@ __marimo__/
 
 # Challenge data
 data/
+
+# Experiment Outputs
+experiment_outputs/*
